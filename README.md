@@ -42,6 +42,8 @@ A configuração é feita via interface (Config Flow):
 3. Informe:
    - URL da API (padrão: `https://api.abacofinance.com.br`)
    - Token da API
+   -- Para pegar o Token API:
+      -- Login na Ábaco com sua conta -> Perfil -> API Playground -> Gerar o Token copiar e colar na integração quando for solicitado.
 
 A integração validará o token e conectividade antes de criar a entrada.
 
