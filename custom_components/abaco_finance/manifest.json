@@ -1,0 +1,14 @@
+{
+  "domain": "abaco_finance",
+  "name": "Ábaco Finance",
+  "codeowners": [
+    "@TiagoK-777"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/TiagoK-777/hass-abaco-finance",
+  "issue_tracker": "https://github.com/TiagoK-777/hass-abaco-finance/issues",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "version": "1.0.0"
+}

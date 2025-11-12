@@ -1,0 +1,24 @@
+{
+  "entity": {
+    "sensor": {
+      "profile": {
+        "default": "mdi:account"
+      },
+      "transactions": {
+        "default": "mdi:swap-horizontal"
+      },
+      "accounts": {
+        "default": "mdi:bank"
+      },
+      "credit_cards": {
+        "default": "mdi:credit-card"
+      },
+      "investments": {
+        "default": "mdi:chart-line"
+      },
+      "assets": {
+        "default": "mdi:treasure-chest"
+      }
+    }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "Esta conta já está configurada"
+    },
+    "error": {
+      "cannot_connect": "Falha ao conectar com a API",
+      "invalid_auth": "Token de API inválido"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "api_url": "URL da API",
+          "api_token": "Token da API"
+        },
+        "data_description": {
+          "api_url": "URL base da API do Ábaco Finance (padrão: https://api.abacofinance.com.br)",
+          "api_token": "Seu token de autenticação da API"
+        },
+        "description": "Configure sua integração com o Ábaco Finance para monitorar suas finanças."
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "profile": {
+        "name": "Perfil"
+      },
+      "transactions": {
+        "name": "Transações"
+      },
+      "accounts": {
+        "name": "Contas"
+      },
+      "credit_cards": {
+        "name": "Cartões de Crédito"
+      },
+      "investments": {
+        "name": "Investimentos"
+      },
+      "assets": {
+        "name": "Ativos"
+      }
+    }
+  }
+}
