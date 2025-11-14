@@ -115,13 +115,9 @@ class AbacoFinanceClient:
         """
         return await self._request("/api/v1/investments")
 
-    async def get_assets(self) -> dict[str, Any]:
-        """Obter dados de ativos."""
-        return await self._request("/api/v1/assets")
-
     async def get_patrimony(self) -> dict[str, Any]:
         """Obter dados consolidados de patrimônio."""
-        return await self._request("/api/v1/patrimony")
+        return await self._request("/api/v1/assets")
 
     async def test_connection(self) -> bool:
         """Test the connection to the API.

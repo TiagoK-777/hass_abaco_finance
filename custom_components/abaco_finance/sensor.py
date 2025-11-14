@@ -16,6 +16,7 @@ from . import AbacoFinanceConfigEntry
 from .api_client import AbacoFinanceClient
 from .const import DOMAIN
 from .entity import AbacoFinanceEntity
+from .icon_mapper import get_mdi_icon
 
 SCAN_INTERVAL = timedelta(minutes=5)
 PARALLEL_UPDATES = 4
@@ -129,21 +130,11 @@ async def async_setup_entry(
             client,
             entry,
             "accounts",
-            "total_accounts",
-            "Total de Contas",
-            icon="mdi:counter",
-        )
-    )
-    entities.append(
-        AbacoFinanceEndpointSensor(
-            client,
-            entry,
-            "accounts",
             "summary.0.total_balance",
             "Saldo Total",
             device_class=SensorDeviceClass.MONETARY,
             unit="BRL",
-            icon="mdi:bank",
+            icon="mdi:cash",
         )
     )
     entities.append(
@@ -153,7 +144,7 @@ async def async_setup_entry(
             "accounts",
             "summary.0.account_count",
             "Quantidade de Contas",
-            icon="mdi:bank",
+            icon="mdi:counter",
         )
     )
 
@@ -323,7 +314,6 @@ class AbacoFinanceEndpointSensor(AbacoFinanceEntity, SensorEntity):
             "accounts": "Contas",
             "credit_cards": "Cartões de Crédito",
             "investments": "Investimentos",
-            "assets": "Ativos",
             "transactions": "Transações",
         }
 
@@ -372,8 +362,6 @@ class AbacoFinanceEndpointSensor(AbacoFinanceEntity, SensorEntity):
             data = await self.client.get_credit_cards()
         elif self._endpoint == "investments":
             data = await self.client.get_investments()
-        elif self._endpoint == "assets":
-            data = await self.client.get_assets()
         elif self._endpoint == "transactions":
             data = await self.client.get_transactions()
         else:
@@ -527,19 +515,24 @@ class AbacoFinancePatrimonyItemSensor(AbacoFinanceEntity, SensorEntity):
         super().__init__(client, entry)
         self._item_id = item["id"]
         self._item_name = item.get("name", "Patrimônio")
-        self._patrimony_type = item.get("patrimony_type")
-        self._patrimony_category = item.get("patrimony_category")
+        self._category_icon = item.get("category_icon")
 
         self._attr_name = self._item_name
         self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_patrimony_item_{self._item_id}"
 
         icon = "mdi:home"
-        if self._patrimony_type == "vehicle":
+        if self._category_icon == "🚗":
             icon = "mdi:car"
-        elif self._patrimony_type == "property":
-            icon = "mdi:home-city"
-        if self._patrimony_category == "land":
-            icon = "mdi:pine-tree"
+        if self._category_icon == "📦":
+            icon = "mdi:package-variant-closed"
+        if self._category_icon == "💻":
+            icon = "mdi:laptop"
+        if self._category_icon == "💎":
+            icon = "mdi:diamond-stone"
+        if self._category_icon == "📱":
+            icon = "mdi:cellphone"
+        if self._category_icon == "🏍️":
+            icon = "mdi:motorbike"
         self._attr_icon = icon
 
         try:
@@ -601,7 +594,7 @@ class AbacoFinancePatrimonySummarySensor(AbacoFinanceEntity, SensorEntity):
         self._attr_name = "Resumo Patrimônio"
         self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_patrimony_summary"
 
-        value = summary.get("total_value")
+        value = summary.get("total_current_value")
         try:
             self._attr_native_value = float(value) if value is not None else 0.0
         except (ValueError, TypeError):
@@ -632,7 +625,7 @@ class AbacoFinancePatrimonySummarySensor(AbacoFinanceEntity, SensorEntity):
         if not isinstance(summary, dict):
             return
 
-        value = summary.get("total_value")
+        value = summary.get("total_current_value")
         try:
             self._attr_native_value = float(value) if value is not None else 0.0
         except (ValueError, TypeError):
@@ -707,7 +700,7 @@ class AbacoFinanceInvestmentsTotalSensor(AbacoFinanceEntity, SensorEntity):
 
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_native_unit_of_measurement = "BRL"
-    _attr_icon = "mdi:chart-line"
+    _attr_icon = "mdi:cash-multiple"
     _attr_entity_registry_enabled_default = True
 
     def __init__(
@@ -717,7 +710,7 @@ class AbacoFinanceInvestmentsTotalSensor(AbacoFinanceEntity, SensorEntity):
     ) -> None:
         """Inicializa o sensor de valor total de investimentos."""
         super().__init__(client, entry)
-        self._attr_name = "Valor Total Investido"
+        self._attr_name = "Total Investido"
         self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_investments_total_value"
 
     @property
