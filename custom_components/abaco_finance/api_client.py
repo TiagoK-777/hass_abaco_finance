@@ -131,3 +131,21 @@ class AbacoFinanceClient:
         """
         await self.get_profile()
         return True
+
+    async def create_transaction(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Cria uma nova transação na API."""
+        url = f"{self.api_url}/api/v1/transactions"
+        
+        try:
+            async with asyncio.timeout(10):
+                async with self.session.post(url, json=payload, headers=self._headers) as response:
+                    if response.status == 201:
+                        data = await response.json()
+                        return {"success": True, "data": data, "id": data.get("id")}
+                    else:
+                        error_text = await response.text()
+                        return {"success": False, "status": response.status, "error": error_text}
+        except asyncio.TimeoutError as err:
+            return {"success": False, "error": "Timeout connecting to API"}
+        except aiohttp.ClientError as err:
+            return {"success": False, "error": f"Connection error: {err}"}

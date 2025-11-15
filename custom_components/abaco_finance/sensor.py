@@ -1,7 +1,7 @@
 """Suporte para sensores do Ábaco Finance."""
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -275,6 +275,30 @@ async def async_setup_entry(
                     summary,
                 )
             )
+
+    # =========================
+    # Endpoint Transactions
+    # - Sensor para transações do mês atual
+    # - Sensor para transações do mês passado
+    # =========================
+    
+    entities.append(
+        AbacoFinanceTransactionsSensor(
+            client,
+            entry,
+            "current_month",
+            "Transações Mês Atual",
+        )
+    )
+    
+    entities.append(
+        AbacoFinanceTransactionsSensor(
+            client,
+            entry,
+            "previous_month",
+            "Transações Mês Passado",
+        )
+    )
 
     # Registrar todas as entidades
     LOGGER.info("Total de entidades criadas: %d", len(entities))
@@ -742,4 +766,149 @@ class AbacoFinanceInvestmentsTotalSensor(AbacoFinanceEntity, SensorEntity):
         self._attr_extra_state_attributes = {
             "count": len(data) if isinstance(data, list) else 0,
             "investments": data if isinstance(data, list) else [],
+        }
+
+
+class AbacoFinanceTransactionsSensor(AbacoFinanceEntity, SensorEntity):
+    """Sensor para transações mensais (mês atual ou mês passado)."""
+
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_native_unit_of_measurement = "BRL"
+    _attr_entity_registry_enabled_default = True
+
+    def __init__(
+        self,
+        client: AbacoFinanceClient,
+        entry: AbacoFinanceConfigEntry,
+        period: str,
+        name: str,
+    ) -> None:
+        """Inicializa o sensor de transações mensais.
+        
+        Args:
+            client: Cliente da API
+            entry: Config entry
+            period: "current_month" ou "previous_month"
+            name: Nome do sensor
+        """
+        super().__init__(client, entry)
+        self._period = period
+        self._attr_name = name
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_transactions_{period}"
+        self._attr_icon = "mdi:cash-multiple"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Agrupa todos os sensores de transações no dispositivo único 'Transações'."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_transactions")},
+            name="Transações",
+            manufacturer="Ábaco Finance",
+            model="Endpoint - transactions",
+        )
+
+    def _filter_transactions_by_period(self, transactions: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], float]:
+        """Filtra transações por período e calcula o total.
+        
+        Args:
+            transactions: Lista de transações
+            
+        Returns:
+            Tupla com (lista de transações filtradas, valor total)
+        """
+        now = datetime.now()
+        
+        if self._period == "current_month":
+            target_year = now.year
+            target_month = now.month
+        else:  # previous_month
+            # Calcular mês anterior
+            if now.month == 1:
+                target_year = now.year - 1
+                target_month = 12
+            else:
+                target_year = now.year
+                target_month = now.month - 1
+        
+        filtered_transactions = []
+        total = 0.0
+        
+        for transaction in transactions:
+            if not isinstance(transaction, dict):
+                continue
+                
+            transaction_date = transaction.get("transaction_date")
+            if not transaction_date:
+                continue
+            
+            try:
+                # Parse da data no formato YYYY-MM-DD
+                date_parts = transaction_date.split("-")
+                if len(date_parts) != 3:
+                    continue
+                    
+                year = int(date_parts[0])
+                month = int(date_parts[1])
+                
+                # Verificar se a transação é do período desejado
+                if year == target_year and month == target_month:
+                    filtered_transactions.append(transaction)
+                    
+                    # Calcular total baseado no tipo de transação
+                    amount = transaction.get("amount", "0")
+                    transaction_type = transaction.get("type", "expense")
+                    
+                    try:
+                        amount_value = float(amount)
+                        if transaction_type == "expense":
+                            total -= amount_value
+                        else:  # income
+                            total += amount_value
+                    except (ValueError, TypeError):
+                        continue
+                        
+            except (ValueError, IndexError):
+                continue
+        
+        return filtered_transactions, total
+
+    async def _abaco_update(self) -> None:
+        """Atualiza o sensor de transações mensais."""
+        data = await self.client.get_transactions()
+        
+        if not isinstance(data, dict):
+            self._attr_native_value = 0.0
+            self._attr_extra_state_attributes = {
+                "transactions": [],
+                "count": 0,
+                "period": self._period,
+            }
+            return
+        
+        transactions = data.get("data", [])
+        if not isinstance(transactions, list):
+            transactions = []
+        
+        # Filtrar transações e calcular total
+        filtered_transactions, total = self._filter_transactions_by_period(transactions)
+        
+        # O state é o valor total
+        self._attr_native_value = abs(total)  # Valor absoluto para exibição
+        
+        # Atributos contêm as transações individuais
+        self._attr_extra_state_attributes = {
+            "transactions": filtered_transactions,
+            "count": len(filtered_transactions),
+            "period": self._period,
+            "total_income": sum(
+                float(t.get("amount", 0))
+                for t in filtered_transactions
+                if t.get("type") == "income"
+            ),
+            "total_expense": sum(
+                float(t.get("amount", 0))
+                for t in filtered_transactions
+                if t.get("type") == "expense"
+            ),
+            "net_flow": total,
         }

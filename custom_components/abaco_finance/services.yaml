@@ -1,0 +1,30 @@
+abaco_transaction:
+  description: "Registra uma transação de despesa na Abaco Finance"
+  fields:
+    amount:
+      description: "Valor da transação em R$ (ex: 12.34)"
+      example: 12.34
+      required: true
+      selector:
+        number:
+          min: 0
+          step: 0.01
+          mode: box
+    description:
+      description: "Descrição da transação"
+      example: "Mercado Extra"
+      required: true
+      selector:
+        text:
+    credit_card_id:
+      description: "ID do cartão de crédito"
+      example: "356ca69a-ffe1-4b01-a34b-4ca9ddc1cc3f"
+      required: true
+      selector:
+        text:
+    category_id:
+      description: "ID da categoria"
+      example: "232ab87a-46c5-44f4-ad7a-501b25d62942"
+      required: true
+      selector:
+        text:
