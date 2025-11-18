@@ -58,7 +58,7 @@ class AbacoFinanceClient:
         url = f"{self.api_url}{endpoint}"
         
         try:
-            async with asyncio.timeout(10):
+            async with asyncio.timeout(60):
                 response = await self.session.get(url, headers=self._headers)
                 
                 if response.status == 401:
@@ -83,13 +83,35 @@ class AbacoFinanceClient:
         """
         return await self._request("/api/v1/profile")
 
-    async def get_transactions(self) -> dict[str, Any]:
-        """Get transactions data.
+    async def get_transactions(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict[str, Any]:
+        """Get transactions data with optional date filters.
+        
+        Args:
+            start_date: Start date in YYYY-MM-DD format (optional)
+            end_date: End date in YYYY-MM-DD format (optional)
         
         Returns:
             Transactions data dictionary
         """
-        return await self._request("/api/v1/transactions")
+        from .const import LOGGER
+        
+        endpoint = "/api/v1/transactions"
+        params = []
+        
+        if start_date:
+            params.append(f"start_date={start_date}")
+        if end_date:
+            params.append(f"end_date={end_date}")
+        
+        if params:
+            endpoint = f"{endpoint}?{'&'.join(params)}"
+        
+        LOGGER.debug("Buscando transações: %s", endpoint)
+        return await self._request(endpoint)
 
     async def get_accounts(self) -> dict[str, Any]:
         """Get accounts data.

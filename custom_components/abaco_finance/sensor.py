@@ -807,108 +807,153 @@ class AbacoFinanceTransactionsSensor(AbacoFinanceEntity, SensorEntity):
             model="Endpoint - transactions",
         )
 
-    def _filter_transactions_by_period(self, transactions: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], float]:
-        """Filtra transações por período e calcula o total.
-        
-        Args:
-            transactions: Lista de transações
-            
-        Returns:
-            Tupla com (lista de transações filtradas, valor total)
-        """
-        now = datetime.now()
-        
-        if self._period == "current_month":
-            target_year = now.year
-            target_month = now.month
-        else:  # previous_month
-            # Calcular mês anterior
-            if now.month == 1:
-                target_year = now.year - 1
-                target_month = 12
-            else:
-                target_year = now.year
-                target_month = now.month - 1
-        
-        filtered_transactions = []
-        total = 0.0
-        
-        for transaction in transactions:
-            if not isinstance(transaction, dict):
-                continue
-                
-            transaction_date = transaction.get("transaction_date")
-            if not transaction_date:
-                continue
-            
-            try:
-                # Parse da data no formato YYYY-MM-DD
-                date_parts = transaction_date.split("-")
-                if len(date_parts) != 3:
-                    continue
-                    
-                year = int(date_parts[0])
-                month = int(date_parts[1])
-                
-                # Verificar se a transação é do período desejado
-                if year == target_year and month == target_month:
-                    filtered_transactions.append(transaction)
-                    
-                    # Calcular total baseado no tipo de transação
-                    amount = transaction.get("amount", "0")
-                    transaction_type = transaction.get("type", "expense")
-                    
-                    try:
-                        amount_value = float(amount)
-                        if transaction_type == "expense":
-                            total -= amount_value
-                        else:  # income
-                            total += amount_value
-                    except (ValueError, TypeError):
-                        continue
-                        
-            except (ValueError, IndexError):
-                continue
-        
-        return filtered_transactions, total
-
     async def _abaco_update(self) -> None:
         """Atualiza o sensor de transações mensais."""
-        data = await self.client.get_transactions()
+        from .const import LOGGER
+        from datetime import date
         
-        if not isinstance(data, dict):
+        LOGGER.info("[%s] Iniciando atualização de transações para período: %s", self._attr_name, self._period)
+        
+        try:
+            # Calcular datas de início e fim do período
+            now = datetime.now()
+            
+            if self._period == "current_month":
+                target_year = now.year
+                target_month = now.month
+            else:  # previous_month
+                if now.month == 1:
+                    target_year = now.year - 1
+                    target_month = 12
+                else:
+                    target_year = now.year
+                    target_month = now.month - 1
+            
+            # Primeiro dia do mês
+            start_date = f"{target_year:04d}-{target_month:02d}-01"
+            
+            # Último dia do mês
+            if target_month == 12:
+                next_month = 1
+                next_year = target_year + 1
+            else:
+                next_month = target_month + 1
+                next_year = target_year
+            
+            # Último dia é o dia anterior ao primeiro dia do próximo mês
+            last_day = (date(next_year, next_month, 1) - timedelta(days=1)).day
+            end_date = f"{target_year:04d}-{target_month:02d}-{last_day:02d}"
+            
+            LOGGER.info(
+                "[%s] Buscando transações do período: %s a %s",
+                self._attr_name,
+                start_date,
+                end_date
+            )
+            
+            # Buscar transações com filtro de data na API
+            data = await self.client.get_transactions(
+                start_date=start_date,
+                end_date=end_date
+            )
+            
+            # Validar resposta
+            if not isinstance(data, dict):
+                LOGGER.error(
+                    "[%s] Resposta da API não é um dicionário! Tipo: %s",
+                    self._attr_name,
+                    type(data).__name__
+                )
+                self._attr_native_value = 0.0
+                self._attr_extra_state_attributes = {
+                    "transactions": [],
+                    "count": 0,
+                    "period": self._period,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "error": f"Tipo de resposta inválido: {type(data).__name__}",
+                }
+                return
+            
+            # Obter lista de transações
+            transactions = data.get("data", [])
+            
+            if not isinstance(transactions, list):
+                LOGGER.error(
+                    "[%s] Campo 'data' não é uma lista! Tipo: %s",
+                    self._attr_name,
+                    type(transactions).__name__
+                )
+                transactions = []
+            
+            total_received = len(transactions)
+            LOGGER.info(
+                "[%s] Total de transações recebidas para o período: %d",
+                self._attr_name,
+                total_received
+            )
+            
+            # Calcular totais por tipo
+            total_income = 0.0
+            total_expense = 0.0
+            
+            for transaction in transactions:
+                try:
+                    amount = float(transaction.get("amount", 0))
+                    transaction_type = transaction.get("type", "expense")
+                    
+                    if transaction_type == "income":
+                        total_income += amount
+                    else:
+                        total_expense += amount
+                except (ValueError, TypeError):
+                    LOGGER.debug(
+                        "[%s] Valor inválido na transação ID=%s: %s",
+                        self._attr_name,
+                        transaction.get("id"),
+                        transaction.get("amount")
+                    )
+                    continue
+            
+            # Calcular saldo líquido (receitas - despesas)
+            net_flow = total_income - total_expense
+            
+            LOGGER.info(
+                "[%s] Resumo: Receitas=R$ %.2f | Despesas=R$ %.2f | Saldo=R$ %.2f",
+                self._attr_name,
+                total_income,
+                total_expense,
+                net_flow
+            )
+            
+            # O state é o valor absoluto do saldo
+            self._attr_native_value = abs(net_flow)
+            
+            # Atributos contêm as transações individuais
+            self._attr_extra_state_attributes = {
+                "transactions": transactions,
+                "count": total_received,
+                "period": self._period,
+                "start_date": start_date,
+                "end_date": end_date,
+                "total_income": total_income,
+                "total_expense": total_expense,
+                "net_flow": net_flow,
+            }
+            
+            LOGGER.debug("[%s] Atualização concluída com sucesso", self._attr_name)
+            
+        except Exception as e:
+            LOGGER.error(
+                "[%s] Erro ao atualizar transações: %s",
+                self._attr_name,
+                str(e),
+                exc_info=True
+            )
             self._attr_native_value = 0.0
             self._attr_extra_state_attributes = {
                 "transactions": [],
                 "count": 0,
                 "period": self._period,
+                "error": str(e),
             }
-            return
-        
-        transactions = data.get("data", [])
-        if not isinstance(transactions, list):
-            transactions = []
-        
-        # Filtrar transações e calcular total
-        filtered_transactions, total = self._filter_transactions_by_period(transactions)
-        
-        # O state é o valor total
-        self._attr_native_value = abs(total)  # Valor absoluto para exibição
-        
-        # Atributos contêm as transações individuais
-        self._attr_extra_state_attributes = {
-            "transactions": filtered_transactions,
-            "count": len(filtered_transactions),
-            "period": self._period,
-            "total_income": sum(
-                float(t.get("amount", 0))
-                for t in filtered_transactions
-                if t.get("type") == "income"
-            ),
-            "total_expense": sum(
-                float(t.get("amount", 0))
-                for t in filtered_transactions
-                if t.get("type") == "expense"
-            ),
-            "net_flow": total,
-        }
