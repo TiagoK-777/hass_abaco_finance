@@ -87,15 +87,29 @@ class AbacoFinanceClient:
         self,
         start_date: str | None = None,
         end_date: str | None = None,
+        status: str | None = None,
+        transaction_type: str | None = None,
+        limit: int = 50,
+        auto_paginate: bool = True,
     ) -> dict[str, Any]:
-        """Get transactions data with optional date filters.
+        """Get transactions data with optional filters and automatic pagination.
         
         Args:
             start_date: Start date in YYYY-MM-DD format (optional)
             end_date: End date in YYYY-MM-DD format (optional)
+            status: Filter by status: 'pending' or 'paid' (optional)
+            transaction_type: Filter by type: 'income' or 'expense' (optional)
+            limit: Maximum items per page (default: 50)
+            auto_paginate: Automatically fetch all pages (default: True)
         
         Returns:
-            Transactions data dictionary
+            Transactions data dictionary with structure:
+            {
+                "data": [...],  # List of transactions
+                "total_count": int,  # Total items across all pages
+                "has_more": bool,  # Whether more pages exist
+                "pages_fetched": int  # Number of pages fetched
+            }
         """
         from .const import LOGGER
         
@@ -106,12 +120,83 @@ class AbacoFinanceClient:
             params.append(f"start_date={start_date}")
         if end_date:
             params.append(f"end_date={end_date}")
+        if status:
+            params.append(f"status={status}")
+        if transaction_type:
+            params.append(f"type={transaction_type}")
         
-        if params:
-            endpoint = f"{endpoint}?{'&'.join(params)}"
+        params.append(f"limit={limit}")
         
-        LOGGER.debug("Buscando transações: %s", endpoint)
-        return await self._request(endpoint)
+        # Build initial URL
+        query_string = "&".join(params)
+        full_endpoint = f"{endpoint}?{query_string}"
+        
+        LOGGER.debug("Buscando transações: %s (auto_paginate=%s)", full_endpoint, auto_paginate)
+        
+        # Fetch first page
+        first_page = await self._request(full_endpoint)
+        
+        if not auto_paginate or not isinstance(first_page, dict):
+            # Return single page result
+            return first_page
+        
+        # Initialize aggregated result
+        all_transactions = first_page.get("data", [])
+        total_count = first_page.get("total", len(all_transactions))
+        pages_fetched = 1
+        
+        # Check if there are more pages
+        has_more = first_page.get("has_more", False)
+        next_cursor = first_page.get("next_cursor")
+        
+        # Fetch remaining pages if auto_paginate is enabled
+        while has_more and next_cursor:
+            params_with_cursor = params + [f"cursor={next_cursor}"]
+            paginated_endpoint = f"{endpoint}?{'&'.join(params_with_cursor)}"
+            
+            LOGGER.debug("Buscando página adicional: cursor=%s", next_cursor)
+            
+            try:
+                page_data = await self._request(paginated_endpoint)
+                
+                if isinstance(page_data, dict):
+                    page_transactions = page_data.get("data", [])
+                    all_transactions.extend(page_transactions)
+                    pages_fetched += 1
+                    
+                    has_more = page_data.get("has_more", False)
+                    next_cursor = page_data.get("next_cursor")
+                    
+                    LOGGER.debug(
+                        "Página %d buscada: %d transações (total acumulado: %d)",
+                        pages_fetched,
+                        len(page_transactions),
+                        len(all_transactions)
+                    )
+                else:
+                    LOGGER.warning("Resposta de paginação inválida, interrompendo")
+                    break
+                    
+            except Exception as e:
+                LOGGER.error("Erro ao buscar página adicional: %s", e)
+                break
+        
+        # Return aggregated result
+        result = {
+            "data": all_transactions,
+            "total_count": total_count,
+            "has_more": False,  # All pages fetched
+            "pages_fetched": pages_fetched,
+        }
+        
+        LOGGER.info(
+            "Transações obtidas: %d itens em %d página(s) (total_count=%d)",
+            len(all_transactions),
+            pages_fetched,
+            total_count
+        )
+        
+        return result
 
     async def get_accounts(self) -> dict[str, Any]:
         """Get accounts data.

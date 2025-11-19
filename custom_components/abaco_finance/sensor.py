@@ -277,26 +277,50 @@ async def async_setup_entry(
             )
 
     # =========================
-    # Endpoint Transactions
-    # - Sensor para transações do mês atual
-    # - Sensor para transações do mês passado
+    # Endpoint Transactions - Novos Sensores
+    # - Contas a Pagar (pending expenses)
+    # - Total Gasto (paid expenses)
+    # - Receitas Recebidas (paid income)
+    # - Saldo do Mês (calculado)
     # =========================
     
     entities.append(
-        AbacoFinanceTransactionsSensor(
+        AbacoFinanceTransactionTypeSensor(
             client,
             entry,
-            "current_month",
-            "Transações Mês Atual",
+            status="pending",
+            transaction_type="expense",
+            name="Contas a Pagar",
+            icon="mdi:calendar-clock",
         )
     )
     
     entities.append(
-        AbacoFinanceTransactionsSensor(
+        AbacoFinanceTransactionTypeSensor(
             client,
             entry,
-            "previous_month",
-            "Transações Mês Passado",
+            status="paid",
+            transaction_type="expense",
+            name="Total Gasto",
+            icon="mdi:cash-minus",
+        )
+    )
+    
+    entities.append(
+        AbacoFinanceTransactionTypeSensor(
+            client,
+            entry,
+            status="paid",
+            transaction_type="income",
+            name="Receitas Recebidas",
+            icon="mdi:cash-plus",
+        )
+    )
+    
+    entities.append(
+        AbacoFinanceMonthBalanceSensor(
+            client,
+            entry,
         )
     )
 
@@ -769,8 +793,8 @@ class AbacoFinanceInvestmentsTotalSensor(AbacoFinanceEntity, SensorEntity):
         }
 
 
-class AbacoFinanceTransactionsSensor(AbacoFinanceEntity, SensorEntity):
-    """Sensor para transações mensais (mês atual ou mês passado)."""
+class AbacoFinanceTransactionTypeSensor(AbacoFinanceEntity, SensorEntity):
+    """Sensor para transações filtradas por status e tipo."""
 
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_native_unit_of_measurement = "BRL"
@@ -780,22 +804,28 @@ class AbacoFinanceTransactionsSensor(AbacoFinanceEntity, SensorEntity):
         self,
         client: AbacoFinanceClient,
         entry: AbacoFinanceConfigEntry,
-        period: str,
+        status: str,
+        transaction_type: str,
         name: str,
+        icon: str | None = None,
     ) -> None:
-        """Inicializa o sensor de transações mensais.
+        """Inicializa o sensor de transações por tipo.
         
         Args:
             client: Cliente da API
             entry: Config entry
-            period: "current_month" ou "previous_month"
+            status: Status das transações ('pending' ou 'paid')
+            transaction_type: Tipo das transações ('income' ou 'expense')
             name: Nome do sensor
+            icon: Ícone do sensor (opcional)
         """
         super().__init__(client, entry)
-        self._period = period
+        self._status = status
+        self._transaction_type = transaction_type
         self._attr_name = name
-        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_transactions_{period}"
-        self._attr_icon = "mdi:cash-multiple"
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_transactions_{status}_{transaction_type}"
+        if icon:
+            self._attr_icon = icon
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -808,75 +838,77 @@ class AbacoFinanceTransactionsSensor(AbacoFinanceEntity, SensorEntity):
         )
 
     async def _abaco_update(self) -> None:
-        """Atualiza o sensor de transações mensais."""
+        """Atualiza o sensor de transações filtradas."""
         from .const import LOGGER
         from datetime import date
         
-        LOGGER.info("[%s] Iniciando atualização de transações para período: %s", self._attr_name, self._period)
+        LOGGER.info(
+            "[%s] Iniciando atualização: status=%s, type=%s",
+            self._attr_name,
+            self._status,
+            self._transaction_type
+        )
         
         try:
-            # Calcular datas de início e fim do período
+            # Calcular datas do mês atual
             now = datetime.now()
+            year = now.year
+            month = now.month
             
-            if self._period == "current_month":
-                target_year = now.year
-                target_month = now.month
-            else:  # previous_month
-                if now.month == 1:
-                    target_year = now.year - 1
-                    target_month = 12
-                else:
-                    target_year = now.year
-                    target_month = now.month - 1
+            # Primeiro dia do mês atual
+            start_date = f"{year:04d}-{month:02d}-01"
             
-            # Primeiro dia do mês
-            start_date = f"{target_year:04d}-{target_month:02d}-01"
-            
-            # Último dia do mês
-            if target_month == 12:
+            # Último dia do mês atual
+            if month == 12:
                 next_month = 1
-                next_year = target_year + 1
+                next_year = year + 1
             else:
-                next_month = target_month + 1
-                next_year = target_year
+                next_month = month + 1
+                next_year = year
             
-            # Último dia é o dia anterior ao primeiro dia do próximo mês
+            from datetime import date
             last_day = (date(next_year, next_month, 1) - timedelta(days=1)).day
-            end_date = f"{target_year:04d}-{target_month:02d}-{last_day:02d}"
+            end_date = f"{year:04d}-{month:02d}-{last_day:02d}"
             
-            LOGGER.info(
-                "[%s] Buscando transações do período: %s a %s",
+            LOGGER.debug(
+                "[%s] Período: %s a %s",
                 self._attr_name,
                 start_date,
                 end_date
             )
             
-            # Buscar transações com filtro de data na API
+            # Buscar transações com filtros
             data = await self.client.get_transactions(
                 start_date=start_date,
-                end_date=end_date
+                end_date=end_date,
+                status=self._status,
+                transaction_type=self._transaction_type,
+                limit=50,
+                auto_paginate=True,
             )
             
             # Validar resposta
             if not isinstance(data, dict):
                 LOGGER.error(
-                    "[%s] Resposta da API não é um dicionário! Tipo: %s",
+                    "[%s] Resposta da API inválida! Tipo: %s",
                     self._attr_name,
                     type(data).__name__
                 )
                 self._attr_native_value = 0.0
                 self._attr_extra_state_attributes = {
                     "transactions": [],
-                    "count": 0,
-                    "period": self._period,
-                    "start_date": start_date,
-                    "end_date": end_date,
+                    "total_count": 0,
+                    "has_more": False,
+                    "pages_fetched": 0,
                     "error": f"Tipo de resposta inválido: {type(data).__name__}",
                 }
                 return
             
             # Obter lista de transações
             transactions = data.get("data", [])
+            total_count = data.get("total_count", len(transactions))
+            has_more = data.get("has_more", False)
+            pages_fetched = data.get("pages_fetched", 1)
             
             if not isinstance(transactions, list):
                 LOGGER.error(
@@ -886,26 +918,20 @@ class AbacoFinanceTransactionsSensor(AbacoFinanceEntity, SensorEntity):
                 )
                 transactions = []
             
-            total_received = len(transactions)
             LOGGER.info(
-                "[%s] Total de transações recebidas para o período: %d",
+                "[%s] Transações obtidas: %d itens em %d página(s) (total=%d)",
                 self._attr_name,
-                total_received
+                len(transactions),
+                pages_fetched,
+                total_count
             )
             
-            # Calcular totais por tipo
-            total_income = 0.0
-            total_expense = 0.0
-            
+            # Calcular total
+            total_amount = 0.0
             for transaction in transactions:
                 try:
                     amount = float(transaction.get("amount", 0))
-                    transaction_type = transaction.get("type", "expense")
-                    
-                    if transaction_type == "income":
-                        total_income += amount
-                    else:
-                        total_expense += amount
+                    total_amount += amount
                 except (ValueError, TypeError):
                     LOGGER.debug(
                         "[%s] Valor inválido na transação ID=%s: %s",
@@ -915,30 +941,30 @@ class AbacoFinanceTransactionsSensor(AbacoFinanceEntity, SensorEntity):
                     )
                     continue
             
-            # Calcular saldo líquido (receitas - despesas)
-            net_flow = total_income - total_expense
-            
             LOGGER.info(
-                "[%s] Resumo: Receitas=R$ %.2f | Despesas=R$ %.2f | Saldo=R$ %.2f",
+                "[%s] Total calculado: R$ %.2f",
                 self._attr_name,
-                total_income,
-                total_expense,
-                net_flow
+                total_amount
             )
             
-            # O state é o valor absoluto do saldo
-            self._attr_native_value = abs(net_flow)
+            # Limitar transações a 50 itens nos atributos
+            limited_transactions = transactions[:50]
             
-            # Atributos contêm as transações individuais
+            # O state é o valor total
+            self._attr_native_value = total_amount
+            
+            # Atributos com limite de 50 itens e metadados
             self._attr_extra_state_attributes = {
-                "transactions": transactions,
-                "count": total_received,
-                "period": self._period,
-                "start_date": start_date,
-                "end_date": end_date,
-                "total_income": total_income,
-                "total_expense": total_expense,
-                "net_flow": net_flow,
+                "transactions": limited_transactions,
+                "total_count": total_count,
+                "has_more": has_more or len(transactions) > 50,
+                "pages_fetched": pages_fetched,
+                "status": self._status,
+                "type": self._transaction_type,
+                "period_start": start_date,
+                "period_end": end_date,
+                "items_shown": len(limited_transactions),
+                "items_total": len(transactions),
             }
             
             LOGGER.debug("[%s] Atualização concluída com sucesso", self._attr_name)
@@ -953,7 +979,163 @@ class AbacoFinanceTransactionsSensor(AbacoFinanceEntity, SensorEntity):
             self._attr_native_value = 0.0
             self._attr_extra_state_attributes = {
                 "transactions": [],
-                "count": 0,
-                "period": self._period,
+                "total_count": 0,
+                "has_more": False,
+                "pages_fetched": 0,
+                "error": str(e),
+            }
+
+
+class AbacoFinanceMonthBalanceSensor(AbacoFinanceEntity, SensorEntity):
+    """Sensor para saldo do mês (receitas pagas - despesas pagas)."""
+
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_native_unit_of_measurement = "BRL"
+    _attr_entity_registry_enabled_default = True
+    _attr_icon = "mdi:scale-balance"
+
+    def __init__(
+        self,
+        client: AbacoFinanceClient,
+        entry: AbacoFinanceConfigEntry,
+    ) -> None:
+        """Inicializa o sensor de saldo do mês."""
+        super().__init__(client, entry)
+        self._attr_name = "Saldo do Mês"
+        self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_transactions_month_balance"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Agrupa todos os sensores de transações no dispositivo único 'Transações'."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"{self._entry.entry_id}_transactions")},
+            name="Transações",
+            manufacturer="Ábaco Finance",
+            model="Endpoint - transactions",
+        )
+
+    async def _abaco_update(self) -> None:
+        """Atualiza o sensor de saldo do mês."""
+        from .const import LOGGER
+        from datetime import date
+        
+        LOGGER.info("[%s] Iniciando atualização do saldo do mês", self._attr_name)
+        
+        try:
+            # Calcular datas do mês atual
+            now = datetime.now()
+            year = now.year
+            month = now.month
+            
+            # Primeiro dia do mês atual
+            start_date = f"{year:04d}-{month:02d}-01"
+            
+            # Último dia do mês atual
+            if month == 12:
+                next_month = 1
+                next_year = year + 1
+            else:
+                next_month = month + 1
+                next_year = year
+            
+            from datetime import date
+            last_day = (date(next_year, next_month, 1) - timedelta(days=1)).day
+            end_date = f"{year:04d}-{month:02d}-{last_day:02d}"
+            
+            LOGGER.debug(
+                "[%s] Período: %s a %s",
+                self._attr_name,
+                start_date,
+                end_date
+            )
+            
+            # Buscar receitas pagas
+            income_data = await self.client.get_transactions(
+                start_date=start_date,
+                end_date=end_date,
+                status="paid",
+                transaction_type="income",
+                limit=50,
+                auto_paginate=True,
+            )
+            
+            # Buscar despesas pagas
+            expense_data = await self.client.get_transactions(
+                start_date=start_date,
+                end_date=end_date,
+                status="paid",
+                transaction_type="expense",
+                limit=50,
+                auto_paginate=True,
+            )
+            
+            # Calcular totais
+            total_income = 0.0
+            income_transactions = []
+            if isinstance(income_data, dict):
+                income_transactions = income_data.get("data", [])
+                for transaction in income_transactions:
+                    try:
+                        total_income += float(transaction.get("amount", 0))
+                    except (ValueError, TypeError):
+                        continue
+            
+            total_expense = 0.0
+            expense_transactions = []
+            if isinstance(expense_data, dict):
+                expense_transactions = expense_data.get("data", [])
+                for transaction in expense_transactions:
+                    try:
+                        total_expense += float(transaction.get("amount", 0))
+                    except (ValueError, TypeError):
+                        continue
+            
+            # Calcular saldo (receitas - despesas)
+            balance = total_income - total_expense
+            
+            LOGGER.info(
+                "[%s] Receitas: R$ %.2f | Despesas: R$ %.2f | Saldo: R$ %.2f",
+                self._attr_name,
+                total_income,
+                total_expense,
+                balance
+            )
+            
+            # Combinar transações (limitado a 50 itens)
+            all_transactions = income_transactions + expense_transactions
+            limited_transactions = all_transactions[:50]
+            
+            # O state é o saldo
+            self._attr_native_value = balance
+            
+            # Atributos com metadados
+            self._attr_extra_state_attributes = {
+                "transactions": limited_transactions,
+                "total_income": total_income,
+                "total_expense": total_expense,
+                "balance": balance,
+                "income_count": len(income_transactions),
+                "expense_count": len(expense_transactions),
+                "period_start": start_date,
+                "period_end": end_date,
+                "items_shown": len(limited_transactions),
+                "items_total": len(all_transactions),
+            }
+            
+            LOGGER.debug("[%s] Atualização concluída com sucesso", self._attr_name)
+            
+        except Exception as e:
+            LOGGER.error(
+                "[%s] Erro ao atualizar saldo: %s",
+                self._attr_name,
+                str(e),
+                exc_info=True
+            )
+            self._attr_native_value = 0.0
+            self._attr_extra_state_attributes = {
+                "transactions": [],
+                "total_income": 0.0,
+                "total_expense": 0.0,
+                "balance": 0.0,
                 "error": str(e),
             }
